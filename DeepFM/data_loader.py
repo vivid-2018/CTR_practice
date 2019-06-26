@@ -1,7 +1,7 @@
 # encoding = utf8
 import os
 import pandas as pd 
-import numpy as np 
+import numpy as numpy 
 from sklearn.preprocessing import LabelEncoder
 
 def data_load(file_path,nrows=None):
