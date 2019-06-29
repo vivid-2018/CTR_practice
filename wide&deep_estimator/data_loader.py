@@ -13,12 +13,10 @@ def data_load(file_path, nrows=None):
     if not os.path.exists(file_path):
         return
     data = pd.read_csv(file_path, nrows=nrows)
-    feature_size = {}
     for s in args.CATEGORICAL_FEATURES:
         le = LabelEncoder()
         data[s] = data[s].apply(str)
         data[s] = le.fit_transform(data[s].values)
-        feature_size[s] = len(le.classes_)
     return data
 
 
