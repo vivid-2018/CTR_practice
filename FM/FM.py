@@ -1,6 +1,6 @@
 # encoding = utf8
 """
-This is an implementation of FM model by Tensorflow.
+This is an implementation of FM model with Tensorflow.
 @author:vivid.
 """
 

@@ -1,6 +1,6 @@
 # encoding = utf8
 """
-This is an implementation of FM model by Tensorflow.
+This is an implementation of DeepFM model with Tensorflow.
 @author:vivid.
 """
 
@@ -15,10 +15,9 @@ class DeepFM(BaseEstimator, TransformerMixin):
 
     def __init__(self, features, feature_size, embedding_size=16, learning_rate=0.001,
                  layers=[64, 64, 64], batch_norm=True, dropout=0.7,
-                 first_order=True, second_order=True, optimizer_type='Adam',loss_type='logloss', 
+                 optimizer_type='Adam',loss_type='logloss', 
                  verbose=True, greater_is_better=True, eval_metric=roc_auc_score, random_seed=2019):
-        assert first_order or second_order, "Must use first_order or second_order"
-        
+   
         self.features = features
         self.feature_size = feature_size
         
@@ -28,9 +27,6 @@ class DeepFM(BaseEstimator, TransformerMixin):
         self.layers = layers
         self.batch_norm = batch_norm
         self.dropout = dropout
- 
-        #self.first_order = first_order
-        #self.second_order = second_order
 
         self.optimizer_type = optimizer_type
         self.loss_type = loss_type

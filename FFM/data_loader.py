@@ -18,7 +18,7 @@ def data_load(file_path,nrows=None):
     for s in features:
         le = LabelEncoder()
         data[s] = data[s].apply(str)
-        data[s] = le.fit_transform(data[s].values.reshape(-1,1))
+        data[s] = le.fit_transform(data[s].values)
         feature_size[s] = len(le.classes_)
     return feature_size, field_dict, data 
 if __name__ == '__main__':

@@ -1,34 +1,33 @@
 # encoding = utf8
 """
-This is an implementation of FFM model with Tensorflow.
+This is an implementation of NFM model with Tensorflow.
 @author:vivid.
 """
 
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import roc_auc_score
-from collections import defaultdict
 import tensorflow as tf 
 import numpy as np 
 from time import time 
+from tensorflow.contrib.layers import batch_norm
 
-class FFM(BaseEstimator, TransformerMixin):
+class NFM(BaseEstimator, TransformerMixin):
 
-    def __init__(self, features, feature_size, field_dict, embedding_size=16, learning_rate=0.001,
-                 first_order=True, second_order=True, optimizer_type='Adam',loss_type='logloss', 
+    def __init__(self, features, feature_size, embedding_size=16, learning_rate=0.001,
+                 layers=[64, 64, 64], batch_norm=True, dropout=0.7,
+                 optimizer_type='Adam',loss_type='logloss', 
                  verbose=True, greater_is_better=True, eval_metric=roc_auc_score, random_seed=2019):
         
-        assert first_order or second_order, "Must use first_order or second_order"
-        assert len(field_dict) >= 2, "Field num is no more than 2, please turn to FM"
         self.features = features
         self.feature_size = feature_size
-        self.field_dict = field_dict
         
         self.embedding_size = embedding_size
         self.learning_rate = learning_rate
 
-        self.first_order = first_order
-        self.second_order = second_order
-
+        self.layers = layers
+        self.batch_norm = batch_norm
+        self.dropout = dropout
+ 
         self.optimizer_type = optimizer_type
         self.loss_type = loss_type
         self.verbose = verbose
@@ -36,9 +35,6 @@ class FFM(BaseEstimator, TransformerMixin):
         self.greater_is_better = greater_is_better
         self.eval_metric = eval_metric
         self.random_seed = random_seed
-
-        self.field_size = len(self.field_dict)
-        self.field = list(self.field_dict.keys())
 
         self._init_graph()
 
@@ -54,32 +50,45 @@ class FFM(BaseEstimator, TransformerMixin):
             self.weights = self._init_weights()
 
             lr_result = []
+            fm_result = []
             for i in range(len(self.features)):
                 s = self.features[i]
                 lr_vec = tf.gather(self.weights[s+'_lr_embedding'],self.input[:,i])
+                fm_vec = tf.gather(self.weights[s+'_fm_embedding'],self.input[:,i])
+
                 lr_result.append(lr_vec)
+                fm_result.append(fm_vec)
 
-            self.lr_out = tf.add(self.weights['bias'],sum(lr_result))
+            # wide part
+            wide_part = tf.add(self.weights['bias_lr'], sum(lr_result))
 
+            fm_wide = tf.concat(fm_result, axis=1)
+            fm_wide = tf.reshape(fm_wide, (-1, self.embedding_size, len(self.features)))
+            fm_wide = tf.square(tf.reduce_sum(fm_wide, axis=2)) - tf.reduce_sum(tf.square(fm_wide), axis=2)
+            fm_wide = tf.reduce_sum(fm_wide, axis=1, keepdims=True)*0.5
 
-            ffm_vec = defaultdict(list)
-            for field_index in self.field_dict:
-                for s in self.field_dict[field_index]:
-                    i = self.features.index(s)
-                    vec = tf.gather(self.weights[s+'_ffm_embedding'], self.input[:,i])
-                    ffm_vec[field_index].append(vec)
-                ffm_vec[field_index] = tf.reshape(sum(ffm_vec[field_index]),[-1,self.field_size-1,self.embedding_size])
+            wide_part = tf.add(wide_part, fm_wide)
 
-            ffm_result = []
-            for i in range(len(self.field_dict)):
-                f1 = self.field[i]
-                for j in range(i+1,len(self.field_dict)):
-                    f2 = self.field[j]
-                    vec = tf.multiply(ffm_vec[f1][:,j-1,:], ffm_vec[f2][:,i,:])
-                    ffm_result.append(vec)
+            # deep part
+            deep_part = tf.concat(fm_result, axis=1)
+            deep_part = tf.reshape(deep_part, (-1, len(self.features), self.embedding_size))
+            deep_part = tf.square(tf.reduce_sum(deep_part, axis=1)) - tf.reduce_sum(tf.square(deep_part), axis=1)
+            deep_part = 0.5 * deep_part
 
-            self.ffm_out = tf.reduce_sum(sum(ffm_result),axis=1,keepdims=True)
-            self.out = self.ffm_out*self.second_order + self.lr_out*self.first_order
+            num_layers = len(self.layers)
+            for i in range(num_layers):
+                deep_part = tf.matmul(deep_part, self.weights['weight_%d' % i])
+                deep_part = tf.add(deep_part, self.weights['bias_%d' % i])
+                deep_part = tf.nn.dropout(deep_part,self.dropout)
+                if self.batch_norm:
+                    deep_part = batch_norm(deep_part)
+
+                deep_part = tf.nn.relu(deep_part)
+
+            out = tf.concat([wide_part, deep_part], axis=1)
+
+            out = tf.matmul(out, self.weights['project_weight'])
+            self.out = tf.add(out, self.weights['project_bias'])
 
             if self.loss_type == 'logloss':
                 self.out = tf.nn.sigmoid(self.out)
@@ -117,26 +126,6 @@ class FFM(BaseEstimator, TransformerMixin):
                 total_parameters += variable_parameters
             if self.verbose > 0:
                 print("#params: %d" % total_parameters)
-
-    def _init_weights(self):
-        weights = {}
-        for s in self.feature_size:
-            n_value = self.feature_size[s]
-            weights[s+'_lr_embedding'] = tf.Variable(
-                tf.random_normal([n_value,1],0.0,0.01),
-                name=s+'_lr_embedding'
-            )
-            weights[s+'_ffm_embedding'] = tf.Variable(
-                tf.random_normal([n_value,self.embedding_size*(self.field_size-1)],0.0,0.01),
-                name=s+'_ffm_embedding'
-            )
-        weights['bias'] = tf.Variable(
-            tf.random_uniform([1,1],0.0,1.0),
-            name = 'bias'
-        )
-
-        return weights
-
 
     def _init_session(self):
         config = tf.ConfigProto(device_count={"gpu": 0})
@@ -251,6 +240,56 @@ class FFM(BaseEstimator, TransformerMixin):
             X_batch, y_batch = self.get_batch(X, dummy_y, batch_size, batch_index)
 
         return np.concatenate(y_pred,axis=0)
+
+
+    def _init_weights(self):
+        weights = {}
+        for s in self.feature_size:
+            n_value = self.feature_size[s]
+            weights[s+'_lr_embedding'] = tf.Variable(
+                tf.random_normal([n_value,1],0.0,0.01),
+                name=s+'_lr_embedding'
+            )
+            weights[s+'_fm_embedding'] = tf.Variable(
+                tf.random_normal([n_value,self.embedding_size],0.0,0.01),
+                name=s+'_fm_embedding'
+            )
+        weights['bias_lr'] = tf.Variable(
+            tf.random_uniform([1,1],0.0,1.0),
+            name = 'bias_lr'
+        )
+
+        for i in range(len(self.layers)):
+            input_size = self.layers[i-1] if i > 0 else self.embedding_size
+            output_size = self.layers[i]
+
+            glorot = np.sqrt(2.0 / (input_size + output_size))
+
+            weights['weight_%d' % i] = tf.Variable(
+                tf.random_normal([input_size, output_size], 0.0, glorot),
+                name='weight_%d' % i
+            )
+
+            weights['bias_%d' % i] = tf.Variable(
+                tf.random_uniform([1, output_size], 0.0, 1.0),
+                name='bias_%d' % i
+            )
+        # 投影权重&偏置
+        input_size = self.layers[-1] + 1
+        output_size = 1
+        glorot = np.sqrt(2.0 / (input_size + output_size))
+        weights['project_weight'] = tf.Variable(
+            tf.random_normal([input_size, 1], 0.0, glorot),
+            name='project_weight'
+        )
+
+        weights['project_bias'] = tf.Variable(
+            tf.random_uniform([1, 1], 0.0, 1.0),
+            name='project_bias'
+        )
+
+        return weights
+
 
 
     def evaluate(self, X, y):

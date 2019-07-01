@@ -1,28 +1,26 @@
 # encoding = utf8
 """
-This is an implementation of FFM model with Tensorflow.
+This is an implementation of AFM model with Tensorflow.
 @author:vivid.
 """
 
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import roc_auc_score
-from collections import defaultdict
 import tensorflow as tf 
 import numpy as np 
 from time import time 
 
-class FFM(BaseEstimator, TransformerMixin):
+class AFM(BaseEstimator, TransformerMixin):
 
-    def __init__(self, features, feature_size, field_dict, embedding_size=16, learning_rate=0.001,
+    def __init__(self, features, feature_size, attention_size=8, embedding_size=16, learning_rate=0.001,
                  first_order=True, second_order=True, optimizer_type='Adam',loss_type='logloss', 
                  verbose=True, greater_is_better=True, eval_metric=roc_auc_score, random_seed=2019):
-        
         assert first_order or second_order, "Must use first_order or second_order"
-        assert len(field_dict) >= 2, "Field num is no more than 2, please turn to FM"
+        
         self.features = features
         self.feature_size = feature_size
-        self.field_dict = field_dict
         
+        self.attention_size = attention_size
         self.embedding_size = embedding_size
         self.learning_rate = learning_rate
 
@@ -36,9 +34,6 @@ class FFM(BaseEstimator, TransformerMixin):
         self.greater_is_better = greater_is_better
         self.eval_metric = eval_metric
         self.random_seed = random_seed
-
-        self.field_size = len(self.field_dict)
-        self.field = list(self.field_dict.keys())
 
         self._init_graph()
 
@@ -54,32 +49,33 @@ class FFM(BaseEstimator, TransformerMixin):
             self.weights = self._init_weights()
 
             lr_result = []
+            fm_result = []
             for i in range(len(self.features)):
                 s = self.features[i]
                 lr_vec = tf.gather(self.weights[s+'_lr_embedding'],self.input[:,i])
+                fm_vec = tf.gather(self.weights[s+'_fm_embedding'],self.input[:,i])
+
                 lr_result.append(lr_vec)
+                fm_result.append(fm_vec)
 
             self.lr_out = tf.add(self.weights['bias'],sum(lr_result))
 
+            fm_result = tf.reshape(tf.concat(fm_result, axis=1), (-1, len(self.features), self.embedding_size))
+            temp = []
+            for i in range(len(self.features)):
+                for j in range(i+1, len(self.features)):
+                    temp.append(tf.expand_dims(tf.multiply(fm_result[:, i, :], fm_result[:, j, :]), dim=1))
 
-            ffm_vec = defaultdict(list)
-            for field_index in self.field_dict:
-                for s in self.field_dict[field_index]:
-                    i = self.features.index(s)
-                    vec = tf.gather(self.weights[s+'_ffm_embedding'], self.input[:,i])
-                    ffm_vec[field_index].append(vec)
-                ffm_vec[field_index] = tf.reshape(sum(ffm_vec[field_index]),[-1,self.field_size-1,self.embedding_size])
+            fm_result = tf.concat(temp, axis=1)
 
-            ffm_result = []
-            for i in range(len(self.field_dict)):
-                f1 = self.field[i]
-                for j in range(i+1,len(self.field_dict)):
-                    f2 = self.field[j]
-                    vec = tf.multiply(ffm_vec[f1][:,j-1,:], ffm_vec[f2][:,i,:])
-                    ffm_result.append(vec)
+            fm_weight = self._attention_weight(fm_result)
 
-            self.ffm_out = tf.reduce_sum(sum(ffm_result),axis=1,keepdims=True)
-            self.out = self.ffm_out*self.second_order + self.lr_out*self.first_order
+            self.fm_out = tf.multiply(fm_result, fm_weight)
+            self.fm_out = tf.reduce_sum(self.fm_out, axis=1)
+            self.fm_out = tf.reduce_sum(self.fm_out, axis=1, keepdims=True)
+
+
+            self.out = self.fm_out*self.second_order + self.lr_out*self.first_order
 
             if self.loss_type == 'logloss':
                 self.out = tf.nn.sigmoid(self.out)
@@ -118,6 +114,19 @@ class FFM(BaseEstimator, TransformerMixin):
             if self.verbose > 0:
                 print("#params: %d" % total_parameters)
 
+
+    def _attention_weight(self, fm_result):
+        attention_weight = tf.reshape(fm_result, (-1, self.embedding_size))
+        attention_weight = tf.matmul(attention_weight, self.weights['attention_weight'])
+        attention_weight = tf.add(attention_weight, self.weights['attention_bias'])
+        attention_weight = tf.nn.relu(attention_weight)
+        attention_weight = tf.matmul(attention_weight, self.weights['attention_output'])
+        num_ = len(self.features) * (len(self.features) - 1) // 2
+        attention_weight = tf.reshape(attention_weight, shape=(-1, num_, 1))
+        attention_weight = tf.nn.softmax(attention_weight, axis=1)
+        return attention_weight
+
+
     def _init_weights(self):
         weights = {}
         for s in self.feature_size:
@@ -126,15 +135,26 @@ class FFM(BaseEstimator, TransformerMixin):
                 tf.random_normal([n_value,1],0.0,0.01),
                 name=s+'_lr_embedding'
             )
-            weights[s+'_ffm_embedding'] = tf.Variable(
-                tf.random_normal([n_value,self.embedding_size*(self.field_size-1)],0.0,0.01),
-                name=s+'_ffm_embedding'
+            weights[s+'_fm_embedding'] = tf.Variable(
+                tf.random_normal([n_value,self.embedding_size],0.0,0.01),
+                name=s+'_fm_embedding'
             )
-        weights['bias'] = tf.Variable(
-            tf.random_uniform([1,1],0.0,1.0),
-            name = 'bias'
+            weights['bias'] = tf.Variable(
+                tf.random_uniform([1,1],0.0,1.0),
+                name = 'bias'
+            )
+        weights['attention_weight'] = tf.Variable(
+            tf.random_normal([self.embedding_size, self.attention_size]),
+            name = 'attention_weight'
         )
-
+        weights['attention_bias'] = tf.Variable(
+            tf.random_uniform([1, self.attention_size]),
+            name = 'attention_bias'
+        )
+        weights['attention_output'] = tf.Variable(
+            tf.random_normal([self.attention_size, 1]),
+            name = 'attention_output'
+        )
         return weights
 
 
