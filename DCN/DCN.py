@@ -14,7 +14,7 @@ from tensorflow.contrib.layers import batch_norm
 class DCN(BaseEstimator, TransformerMixin):
 
     def __init__(self, features, feature_size, embedding_size=16, learning_rate=0.001,
-                 layers=[64, 64, 64], batch_norm=True, dropout=0.7,
+                 layers=[200, 200, 200], batch_norm=True, dropout=0.7,
                  cross_layers=3, optimizer_type='Adam',loss_type='logloss', 
                  verbose=True, greater_is_better=True, eval_metric=roc_auc_score, random_seed=2019):
    
@@ -48,6 +48,7 @@ class DCN(BaseEstimator, TransformerMixin):
 
             self.input = tf.placeholder(tf.int32, [None,len(self.feature_size)])
             self.label = tf.placeholder(tf.int32, [None,1])
+            self.drop_out = tf.placeholder(tf.float32)
 
             self.weights = self._init_weights()
 
@@ -70,7 +71,7 @@ class DCN(BaseEstimator, TransformerMixin):
             for i in range(num_layers):
                 deep_part = tf.matmul(deep_part, self.weights['weight_%d' % i])
                 deep_part = tf.add(deep_part, self.weights['bias_%d' % i])
-                deep_part = tf.nn.dropout(deep_part,self.dropout)
+                deep_part = tf.nn.dropout(deep_part,self.drop_out)
                 if self.batch_norm:
                     deep_part = batch_norm(deep_part)
 
@@ -195,7 +196,8 @@ class DCN(BaseEstimator, TransformerMixin):
     def fit_on_batch(self, X, y):
         feed_dict = {
             self.input: X,
-            self.label: y
+            self.label: y,
+            self.drop_out: self.dropout
         }
         loss, opt = self.sess.run((self.loss, self.optimizer), feed_dict=feed_dict)
         return loss
@@ -278,7 +280,8 @@ class DCN(BaseEstimator, TransformerMixin):
             num_batch = len(y_batch)
             feed_dict = {
                 self.input: X_batch,
-                self.label: np.reshape(y_batch,[-1,1])
+                self.label: np.reshape(y_batch,[-1,1]),
+                self.drop_out: 1.0
             }
             batch_out = self.sess.run(self.out, feed_dict=feed_dict)
             y_pred.append(batch_out)

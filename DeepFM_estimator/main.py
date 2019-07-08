@@ -47,13 +47,12 @@ def main():
     num = df.shape[0] * 4 // 5
     train_df = df[:num]
     valid_df = df[num:]
-
+    estimator = get_estimator()
     for _ in range(args.epochs):
-        estimator = get_estimator()
         # logging.info('==== Start to train ===>')
-        estimator.train(
-            input_fn=lambda: read_csv_data(train_df.values)
-        )
+        #estimator.train(
+        #    input_fn=lambda: read_csv_data(train_df.values)
+        #)
         logging.info('==== Start to evaluate ===>')
         estimator.evaluate(
             input_fn=lambda: read_csv_data(valid_df.values)

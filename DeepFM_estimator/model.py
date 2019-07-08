@@ -68,8 +68,9 @@ def creat_graph(features, labels, mode, params):
     lr_embedding_vecs = []
     fm_embedding_vecs = []
 
-    labels = tf.reshape(labels, (-1, 1))
     weights = init_weights(params)
+
+    dropout = params['dropout'] if mode == tf.estimator.ModeKeys.TRAIN else 1.0
 
     for i in range(len(args.CATEGORICAL_FEATURES)):
         col = args.CATEGORICAL_FEATURES[i]
@@ -97,7 +98,7 @@ def creat_graph(features, labels, mode, params):
     for i in range(num_layers):
         deep_part = tf.matmul(deep_part, weights['weight_%d' % i])
         deep_part = tf.add(deep_part, weights['bias_%d' % i])
-        deep_part = tf.nn.dropout(deep_part, params['dropout'])
+        deep_part = tf.nn.dropout(deep_part, dropout)
         if params['batch_norm']:
             deep_part = batch_norm(deep_part)
 

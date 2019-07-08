@@ -29,7 +29,7 @@ class args:
 
     dropout = 0.7
 
-    layers = [8, 8, 8]
+    layers = [200, 200, 200]
 
     batch_norm = False
 

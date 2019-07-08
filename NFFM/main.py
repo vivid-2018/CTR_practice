@@ -15,7 +15,7 @@ if __name__ == '__main__':
 
     num = data.shape[0] * 4 // 5
 
-    model = NFFM(features, feature_size, feature_field, embedding_size=4, layers=[200,200,200])
+    model = NFFM(features, feature_size, feature_field, embedding_size=4)
 
     X = data[features].values
     y = data.label.values.reshape(-1,1)

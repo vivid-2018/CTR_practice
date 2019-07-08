@@ -7,10 +7,9 @@ from args import args
 from model import creat_graph
 from data_loader import data_load, read_csv_data
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import log_loss, roc_auc_score
 
-# logging.basicConfig(level=logging.INFO,
-# format='%(asctime)-15s [%(filename)s:%(lineno)d] %(levelname)s %(message)s')
+logging.basicConfig(level=logging.INFO,
+format='%(asctime)-15s [%(filename)s:%(lineno)d] %(levelname)s %(message)s')
 
 
 def get_estimator():
@@ -49,19 +48,15 @@ def main():
     train_df = df[:num]
     valid_df = df[num:]
     estimator = get_estimator()
-    for _ in range(args.epochs):
+    for _ in range(1):
         logging.info('==== Start to train ===>')
         estimator.train(
             input_fn=lambda: read_csv_data(train_df.values)
         )
         logging.info('==== Start to evaluate ===>')
-        result = estimator.pridict(
+        estimator.evaluate(
             input_fn=lambda: read_csv_data(valid_df.values)
         )
-        val_result = np.array([item['y_pre'] for item in result])
-        logloss = log_loss(valid_df.label, val_result)
-        auc = roc_auc_score(valid_df.label, val_result)
-        print ('val auc = %f log loss = %f' %(auc, logloss))
 
 
 if __name__ == '__main__':

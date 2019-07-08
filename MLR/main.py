@@ -11,7 +11,7 @@ if len(sys.argv) > 1:
 if __name__ == '__main__':
     path = '../data/data.csv'
 
-    feature_size, data = data_loader.data_load('../data/data.csv', nrows)
+    feature_size, data = data_loader.data_load('../data/data.csv', nrows=nrows)
     features = ['userId', 'movieId', 'tag']
 
     num = data.shape[0] * 4 // 5

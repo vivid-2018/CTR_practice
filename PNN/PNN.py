@@ -14,7 +14,7 @@ from tensorflow.contrib.layers import batch_norm
 class PNN(BaseEstimator, TransformerMixin):
 
     def __init__(self, features, feature_size, embedding_size=16, learning_rate=0.001,
-                 init_size=32 , layers=[64, 64, 64], use_inner=True, batch_norm=True, dropout=0.7,
+                 init_size=32 , layers=[200, 200, 200], use_inner=True, batch_norm=True, dropout=0.7,
                  optimizer_type='Adam',loss_type='logloss', 
                  verbose=True, greater_is_better=True, eval_metric=roc_auc_score, random_seed=2019):
    
@@ -48,6 +48,7 @@ class PNN(BaseEstimator, TransformerMixin):
 
             self.input = tf.placeholder(tf.int32, [None,len(self.feature_size)])
             self.label = tf.placeholder(tf.int32, [None,1])
+            self.drop_out = tf.placeholder(tf.float32)
 
             self.weights = self._init_weights()
 
@@ -87,7 +88,7 @@ class PNN(BaseEstimator, TransformerMixin):
             product_input = tf.concat(res, axis=1)
             deep_part = tf.add(tf.add(linear_input, product_input), self.weights['product_bias'])
             deep_part = tf.nn.relu(deep_part)
-            deep_part = tf.nn.dropout(deep_part, self.dropout)
+            deep_part = tf.nn.dropout(deep_part, self.drop_out)
             
             num_layers = len(self.layers)
             for i in range(num_layers):
@@ -162,7 +163,8 @@ class PNN(BaseEstimator, TransformerMixin):
     def fit_on_batch(self, X, y):
         feed_dict = {
             self.input: X,
-            self.label: y
+            self.label: y,
+            self.drop_out: self.dropout
         }
         loss, opt = self.sess.run((self.loss, self.optimizer), feed_dict=feed_dict)
         return loss
@@ -244,7 +246,8 @@ class PNN(BaseEstimator, TransformerMixin):
             num_batch = len(y_batch)
             feed_dict = {
                 self.input: X_batch,
-                self.label: np.reshape(y_batch,[-1,1])
+                self.label: np.reshape(y_batch,[-1,1]),
+                self.drop_out: 1.0
             }
             batch_out = self.sess.run(self.out, feed_dict=feed_dict)
             y_pred.append(batch_out)

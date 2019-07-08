@@ -16,7 +16,7 @@ class xDeepFM(BaseEstimator, TransformerMixin):
 
     def __init__(self, features, feature_size, embedding_size=16, learning_rate=0.001,
                  layer_size=[128, 128],
-                 layers=[64, 64, 64], batch_norm=True, dropout=0.7,
+                 layers=[200, 200, 200], batch_norm=True, dropout=0.7,
                  optimizer_type='Adam',loss_type='logloss', 
                  verbose=True, greater_is_better=True, eval_metric=roc_auc_score, random_seed=2019):
    
@@ -49,6 +49,7 @@ class xDeepFM(BaseEstimator, TransformerMixin):
 
             self.input = tf.placeholder(tf.int32, [None,len(self.feature_size)])
             self.label = tf.placeholder(tf.int32, [None,1])
+            self.drop_out = tf.placeholder(tf.float32)
 
             self.weights = self._init_weights()
 
@@ -70,13 +71,11 @@ class xDeepFM(BaseEstimator, TransformerMixin):
 
             split_0 = tf.split(wide_input, self.embedding_size*[1], axis=2)
 
-            # print (split_0[0].get_shape())
             m = len(self.features)
             for i in range(len(self.layer_size)):
                 h_k = self.layer_size[i]
                 h_k_1 = self.layer_size[i-1] if i > 0 else m
                 split_k = tf.split(wide_layers[-1], self.embedding_size*[1], axis=2)
-                # print (split_k[0].get_shape())
                 z_k = tf.matmul(split_0, split_k, transpose_b=True)
                 z_k = tf.transpose(z_k, [1,2,3,0])
                 z_k = tf.reshape(z_k, (-1, self.embedding_size, m*h_k_1))
@@ -95,15 +94,12 @@ class xDeepFM(BaseEstimator, TransformerMixin):
             for i in range(num_layers):
                 deep_part = tf.matmul(deep_part, self.weights['weight_%d' % i])
                 deep_part = tf.add(deep_part, self.weights['bias_%d' % i])
-                deep_part = tf.nn.dropout(deep_part,self.dropout)
+                deep_part = tf.nn.dropout(deep_part,self.drop_out)
                 if self.batch_norm:
                     deep_part = batch_norm(deep_part)
 
                 deep_part = tf.nn.relu(deep_part)
-            print(lr_part)
-            print(wide_part)
-            print(deep_part)
-            #exit()
+
             out = tf.concat([lr_part, wide_part, deep_part], axis=1)
 
             out = tf.matmul(out, self.weights['project_weight'])
@@ -169,7 +165,8 @@ class xDeepFM(BaseEstimator, TransformerMixin):
     def fit_on_batch(self, X, y):
         feed_dict = {
             self.input: X,
-            self.label: y
+            self.label: y,
+            self.drop_out: self.dropout
         }
         loss, opt = self.sess.run((self.loss, self.optimizer), feed_dict=feed_dict)
         return loss
@@ -251,7 +248,8 @@ class xDeepFM(BaseEstimator, TransformerMixin):
             num_batch = len(y_batch)
             feed_dict = {
                 self.input: X_batch,
-                self.label: np.reshape(y_batch,[-1,1])
+                self.label: np.reshape(y_batch,[-1,1]),
+                self.drop_out: 1.0
             }
             batch_out = self.sess.run(self.out, feed_dict=feed_dict)
             y_pred.append(batch_out)

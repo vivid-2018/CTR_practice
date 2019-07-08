@@ -13,9 +13,8 @@ from time import time
 class AFM(BaseEstimator, TransformerMixin):
 
     def __init__(self, features, feature_size, attention_size=8, embedding_size=16, learning_rate=0.001,
-                 first_order=True, second_order=True, optimizer_type='Adam',loss_type='logloss', 
+                 optimizer_type='Adam',loss_type='logloss', 
                  verbose=True, greater_is_better=True, eval_metric=roc_auc_score, random_seed=2019):
-        assert first_order or second_order, "Must use first_order or second_order"
         
         self.features = features
         self.feature_size = feature_size
@@ -23,9 +22,6 @@ class AFM(BaseEstimator, TransformerMixin):
         self.attention_size = attention_size
         self.embedding_size = embedding_size
         self.learning_rate = learning_rate
-
-        self.first_order = first_order
-        self.second_order = second_order
 
         self.optimizer_type = optimizer_type
         self.loss_type = loss_type
@@ -75,7 +71,7 @@ class AFM(BaseEstimator, TransformerMixin):
             self.fm_out = tf.reduce_sum(self.fm_out, axis=1, keepdims=True)
 
 
-            self.out = self.fm_out*self.second_order + self.lr_out*self.first_order
+            self.out = self.fm_out + self.lr_out
 
             if self.loss_type == 'logloss':
                 self.out = tf.nn.sigmoid(self.out)

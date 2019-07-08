@@ -67,8 +67,6 @@ def init_weights(params):
 def creat_graph(features, labels, mode, params):
     lr_embedding_vecs = []
     fm_embedding_vecs = []
-
-    labels = tf.reshape(labels, (-1, 1))
     weights = init_weights(params)
 
     for i in range(len(args.CATEGORICAL_FEATURES)):
@@ -100,28 +98,30 @@ def creat_graph(features, labels, mode, params):
         deep_part = params['activation'](deep_part)
 
     out = tf.concat([wide_part, deep_part], axis=1)
-
     out = tf.matmul(out, weights['project_weight'])
     out = tf.add(out, weights['project_bias'])
-
     out = tf.sigmoid(out)
 
-    loss = tf.losses.log_loss(labels, out)
-    auc = tf.metrics.auc(labels=labels, predictions=out)
-    global_step = tf.train.get_or_create_global_step()
-    train_op = tf.train.AdamOptimizer(params['learning_rate']).minimize(loss=loss, global_step=global_step)
-
-    eval_metric_ops = {
-        'auc': tf.metrics.auc(labels=labels, predictions=out)
-    }
-
     if mode == tf.estimator.ModeKeys.TRAIN:
+        loss = tf.losses.log_loss(labels, out)
+        global_step = tf.train.get_or_create_global_step()
+        train_op = tf.train.AdamOptimizer(params['learning_rate'],
+            beta1=0.9, beta2=0.999, epsilon=1e-8).minimize(loss=loss, global_step=global_step)
+        eval_metric_ops = {
+            'auc': tf.metrics.auc(labels=labels, predictions=out)
+        }
         return tf.estimator.EstimatorSpec(
             mode, loss=loss, train_op=train_op,
             eval_metric_ops=eval_metric_ops,
             predictions={'y_pre': out}
         )
     elif mode == tf.estimator.ModeKeys.EVAL:
+        loss = tf.losses.log_loss(labels, out)
+        global_step = tf.train.get_or_create_global_step()
+       
+        eval_metric_ops = {
+            'auc': tf.metrics.auc(labels=labels, predictions=out)
+        }
         return tf.estimator.EstimatorSpec(
             mode, loss=loss,
             eval_metric_ops=eval_metric_ops,

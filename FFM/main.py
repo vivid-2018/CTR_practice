@@ -1,9 +1,13 @@
 import data_loader
 from FFM import FFM 
+import sys
+nrows = None 
+if len(sys.argv) > 1:
+    nrows = sys.argv[1]
+    nrows = int(nrows)
 
 if __name__ == '__main__':
     path = '../data/data.csv'
-    nrows = None
     feature_size, field_dict, data = data_loader.data_load('../data/data.csv',nrows=nrows)
     
     features = ['userId', 'movieId', 'tag']
