@@ -1,3 +1,4 @@
+
 # encoding = utf8
 import os
 import pandas as pd 
@@ -16,6 +17,7 @@ def data_load(file_path,nrows=None):
         data[s] = le.fit_transform(data[s].values)
         feature_size[s] = len(le.classes_)
     return feature_size, data 
+    
 if __name__ == '__main__':
 
     feature_size, df = data_load('../data/data.csv')

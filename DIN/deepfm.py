@@ -1,25 +1,22 @@
-# encoding = utf8
-"""
-This is an implementation of Wide&Deep model with Tensorflow.
-@author:vivid.
-"""
-
+import args
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import roc_auc_score
 import tensorflow as tf 
-import numpy as np 
+import numpy as np
+from dice import dice
 from time import time 
 from tensorflow.contrib.layers import batch_norm
 
-class WideDeep(BaseEstimator, TransformerMixin):
 
-    def __init__(self, features, feature_size, embedding_size=16, learning_rate=0.001,
-                 layers=[200, 200, 200], batch_norm=True, dropout=0.7,
-                 optimizer_type='Adam',loss_type='logloss', 
-                 verbose=True, greater_is_better=True, eval_metric=roc_auc_score, random_seed=2019):
-   
+class DeepFM(BaseEstimator, TransformerMixin):
+
+    def __init__(self, features, feature_tags, embedding_size=16, learning_rate=0.0002,
+                 layers=[200, 200, 200], batch_norm=True, dropout=0.7, activate=tf.nn.relu,
+                 optimizer_type='Adam', loss_type='logloss', l2_reg=0.0001,
+                 verbose=True, verbose_step=2000, eval_metric=roc_auc_score, random_seed=2019):
+        
         self.features = features
-        self.feature_size = feature_size
+        self.feature_tags = feature_tags
         
         self.embedding_size = embedding_size
         self.learning_rate = learning_rate
@@ -28,23 +25,25 @@ class WideDeep(BaseEstimator, TransformerMixin):
         self.batch_norm = batch_norm
         self.dropout = dropout
 
+        self.activate = activate
+
         self.optimizer_type = optimizer_type
         self.loss_type = loss_type
+        self.l2_reg = l2_reg
         self.verbose = verbose
+        self.verbose_step = verbose_step
 
-        self.greater_is_better = greater_is_better
         self.eval_metric = eval_metric
         self.random_seed = random_seed
 
         self._init_graph()
-
 
     def _init_graph(self):
         self.graph = tf.Graph()
         with self.graph.as_default():
             tf.set_random_seed(self.random_seed)
 
-            self.input = tf.placeholder(tf.int32, [None,len(self.feature_size)])
+            self.input = tf.placeholder(tf.string, [None,len(self.features)])
             self.label = tf.placeholder(tf.int32, [None,1])
             self.drop_out = tf.placeholder(tf.float32)
 
@@ -54,14 +53,31 @@ class WideDeep(BaseEstimator, TransformerMixin):
             fm_result = []
             for i in range(len(self.features)):
                 s = self.features[i]
-                lr_vec = tf.gather(self.weights[s+'_lr_embedding'],self.input[:,i])
-                fm_vec = tf.gather(self.weights[s+'_fm_embedding'],self.input[:,i])
+
+                table = tf.contrib.lookup.index_table_from_tensor(mapping=self.feature_tags[s], default_value=0)
+                inp = self.input[:, i]
+                split_tags = tf.string_split(inp, '|')
+
+                sp_tensor = tf.SparseTensor(
+                    indices=split_tags.indices,
+                    values=table.lookup(split_tags.values),
+                    dense_shape=split_tags.dense_shape
+                )
+
+                lr_vec = tf.nn.embedding_lookup_sparse(self.weights[s+'_lr_embedding'],sp_ids=sp_tensor,sp_weights=None)
+                fm_vec = tf.nn.embedding_lookup_sparse(self.weights[s+'_fm_embedding'],sp_ids=sp_tensor,sp_weights=None)
 
                 lr_result.append(lr_vec)
                 fm_result.append(fm_vec)
-
             # wide part
             wide_part = tf.add(self.weights['bias_lr'], sum(lr_result))
+
+            fm_wide = tf.concat(fm_result, axis=1)
+            fm_wide = tf.reshape(fm_wide, (-1, self.embedding_size, len(self.features)))
+            fm_wide = tf.square(tf.reduce_sum(fm_wide, axis=2)) - tf.reduce_sum(tf.square(fm_wide), axis=2)
+            fm_wide = tf.reduce_sum(fm_wide, axis=1, keepdims=True)*0.5
+
+            wide_part = tf.add(wide_part, fm_wide)
 
             # deep part
             deep_part = tf.concat(fm_result, axis=1)
@@ -73,7 +89,7 @@ class WideDeep(BaseEstimator, TransformerMixin):
                 if self.batch_norm:
                     deep_part = batch_norm(deep_part)
 
-                deep_part = tf.nn.relu(deep_part)
+                deep_part = self.activate(deep_part)
 
             out = tf.concat([wide_part, deep_part], axis=1)
 
@@ -86,8 +102,18 @@ class WideDeep(BaseEstimator, TransformerMixin):
             elif self.loss_type == 'mse':
                 self.loss = tf.nn.l2_loss(tf.subtract(self.label,self.out))
             else:
-                self.loss = self.loss_type(self.label,self.out)
+                self.loss = self.loss_type(self.label, self.out)
 
+            if self.l2_reg > 0:
+                self.loss += tf.contrib.layers.l2_regularizer(
+                    self.l2_reg)(self.weights["project_weight"])
+                for i in range(len(self.layers)):
+                    self.loss += tf.contrib.layers.l2_regularizer(
+                        self.l2_reg)(self.weights["weight_%d" % i])
+
+                for embedding_vec in fm_result+lr_result:
+                    self.loss += tf.contrib.layers.l2_regularizer(
+                        self.l2_reg)(embedding_vec)
 
             if self.optimizer_type.lower() == "adam":
                 self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate, beta1=0.9, beta2=0.999,
@@ -103,25 +129,14 @@ class WideDeep(BaseEstimator, TransformerMixin):
 
             self.saver = tf.train.Saver()
             init = tf.global_variables_initializer()
+            table_init = tf.tables_initializer()
             self.sess = self._init_session()
-            self.sess.run(init)
-
-            # number of params
-            total_parameters = 0
-            for variable in self.weights.values():
-                shape = variable.get_shape()
-                variable_parameters = 1
-                for dim in shape:
-                    variable_parameters *= dim.value
-                total_parameters += variable_parameters
-            if self.verbose > 0:
-                print("#params: %d" % total_parameters)
+            self.sess.run([init, table_init])
 
     def _init_session(self):
         config = tf.ConfigProto(device_count={"gpu": 0})
         config.gpu_options.allow_growth = True
         return tf.Session(config=config)
-
 
     def shuffle_in_unison_scary(self, a, b):
         rng_state = np.random.get_state()
@@ -129,13 +144,11 @@ class WideDeep(BaseEstimator, TransformerMixin):
         np.random.set_state(rng_state)
         np.random.shuffle(b)
 
-
     def get_batch(self, X, y, batch_size, index):
         start = index * batch_size
         end = (index+1) * batch_size
         end = end if end < len(y) else len(y)
         return X[start:end], y[start:end]
-
 
     def fit_on_batch(self, X, y):
         feed_dict = {
@@ -145,7 +158,6 @@ class WideDeep(BaseEstimator, TransformerMixin):
         }
         loss, opt = self.sess.run((self.loss, self.optimizer), feed_dict=feed_dict)
         return loss
-
 
     def fit(self, X, y, epoch=10, batch_size=512,
             X_valid=None, y_valid=None,
@@ -159,19 +171,27 @@ class WideDeep(BaseEstimator, TransformerMixin):
             self.shuffle_in_unison_scary(X, y)
             total_batch = int(len(y) / batch_size)
             for i in range(total_batch):
-                
                 X_batch, y_batch = self.get_batch(X, y, batch_size, i)
                 self.fit_on_batch(X_batch, y_batch)
+                if self.verbose and (i + 1) % self.verbose_step == 0:
+                    train_res = self.evaluate(X_batch, y_batch)
+                    if has_valid:
+                        valid_res = self.evaluate(X_valid, y_valid)
+                        print("epoch%2d step %4d train-result %.6f valid-result %.6f [%.1f s]"
+                              % (epoch + 1, i + 1, train_res, valid_res, time() - t1))
+                    else:
+                        print("epoch%2d step %4d train-result %.6f [%.1f s]"
+                              % (epoch + 1, i + 1, train_res, time() - t1))
 
             train_result.append(self.evaluate(X, y))
             if has_valid:
                 valid_result.append(self.evaluate(X_valid, y_valid))
             if self.verbose > 0 and epoch % self.verbose == 0:
                 if has_valid:
-                    print("[%d] train-result=%.4f, valid-result=%.4f [%.1f s]"
+                    print("[%d] train-result=%.6f, valid-result=%.6f [%.1f s]"
                         % (epoch + 1, train_result[-1], valid_result[-1], time() - t1))
                 else:
-                    print("[%d] train-result=%.4f [%.1f s]"
+                    print("[%d] train-result=%.6f [%.1f s]"
                         % (epoch + 1, train_result[-1], time() - t1))
             if has_valid and early_stopping and self.training_termination(valid_result):
                 break
@@ -214,7 +234,6 @@ class WideDeep(BaseEstimator, TransformerMixin):
                     return True
         return False
 
-
     def predict(self, X, batch_size=512):
         dummy_y = [1] * len(X)
         batch_index = 0
@@ -234,11 +253,10 @@ class WideDeep(BaseEstimator, TransformerMixin):
 
         return np.concatenate(y_pred,axis=0)
 
-
     def _init_weights(self):
         weights = {}
-        for s in self.feature_size:
-            n_value = self.feature_size[s]
+        for s in self.feature_tags:
+            n_value = len(self.feature_tags[s]) + 1
             weights[s+'_lr_embedding'] = tf.Variable(
                 tf.random_normal([n_value,1],0.0,0.01),
                 name=s+'_lr_embedding'
@@ -282,8 +300,6 @@ class WideDeep(BaseEstimator, TransformerMixin):
         )
 
         return weights
-
-
 
     def evaluate(self, X, y):
         y_pred = self.predict(X)
