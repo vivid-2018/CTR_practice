@@ -15,12 +15,25 @@ if __name__ == '__main__':
 
     num = data.shape[0] * 4 // 5
 
-    model = NFFM(features, feature_size, feature_field, embedding_size=4)
+    model = NFFM(features, feature_size, feature_field, embedding_size=4, verbose=False)
 
     X = data[features].values
     y = data.label.values.reshape(-1,1)
+    '''
     model.fit(
         X[:num],y[:num], epoch=10,
         X_valid=X[num:],y_valid=y[num:],
         early_stopping=True, refit=True
     )
+    '''
+    import time
+
+    start = time.time()
+    model.fit(X[:num], y[:num], epoch=1)
+    print('train a epoch cost %.2f' % (time.time() - start))
+
+    start = time.time()
+    model.predict(X[num:])
+    print('predict cost %.2f' % (time.time() - start))
+
+

@@ -1,3 +1,4 @@
+
 import data_loader
 from xDeepFM import xDeepFM 
 import sys
@@ -14,12 +15,21 @@ if __name__ == '__main__':
 
     num = data.shape[0] * 4 // 5
 
-    model = xDeepFM(features, feature_size, embedding_size=8)
+    model = xDeepFM(features, feature_size, embedding_size=8, verbose=False)
 
     X = data[features].values
     y = data.label.values.reshape(-1,1)
-    model.fit(
-        X[:num],y[:num], epoch=10,
-        X_valid=X[num:],y_valid=y[num:],
-        early_stopping=True, refit=True
-    )
+    # model.fit(
+    #    X[:num],y[:num], epoch=10,
+    #    X_valid=X[num:], y_valid=y[num:],
+    #    early_stopping=True, refit=True
+    #)
+    import time
+    start = time.time()
+    model.fit(X[:num], y[:num], epoch=1)
+    print('train a epoch cost %.2f' % (time.time() - start))
+
+    start = time.time()
+    model.predict(X[num:])
+    print('predict cost %.2f' % (time.time() - start))
+

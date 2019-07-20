@@ -12,15 +12,17 @@ from time import time
 
 class MLR(BaseEstimator, TransformerMixin):
 
-    def __init__(self, features, feature_size, m=2, learning_rate=0.001, dividing_function=tf.nn.softmax,
+    def __init__(self, features, feature_size, m=2, learning_rate=0.001, l2_reg=0.00001,
+                 dividing_function=tf.nn.softmax,
                  fitting_function=tf.nn.sigmoid, optimizer_type='Adam',loss_type='logloss', 
-                 verbose=True, greater_is_better=True, eval_metric=roc_auc_score, random_seed=2019):
+                 verbose=True, verbose_step=1000, greater_is_better=True, eval_metric=roc_auc_score, random_seed=2019):
         
         self.features = features
         self.feature_size = feature_size
         
         self.m = m
         self.learning_rate = learning_rate
+        self.l2_reg = l2_reg
 
         self.dividing_function = dividing_function
         self.fitting_function = fitting_function
@@ -28,6 +30,7 @@ class MLR(BaseEstimator, TransformerMixin):
         self.optimizer_type = optimizer_type
         self.loss_type = loss_type
         self.verbose = verbose
+        self.verbose_step = verbose_step
 
         self.greater_is_better = greater_is_better
         self.eval_metric = eval_metric
@@ -72,8 +75,13 @@ class MLR(BaseEstimator, TransformerMixin):
             elif self.loss_type == 'mse':
                 self.loss = tf.nn.l2_loss(tf.subtract(self.label,self.out))
             else:
-                self.loss = self.loss_type(self.label,self.out)
+                self.loss = self.loss_type(self.label, self.out)
 
+            if self.l2_reg > 0:
+                self.loss += tf.contrib.layers.l2_regularizer(
+                    self.l2_reg)(lr_divid)
+                self.loss += tf.contrib.layers.l2_regularizer(
+                    self.l2_reg)(lr_fit)
 
             if self.optimizer_type.lower() == "adam":
                 self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate, beta1=0.9, beta2=0.999,
@@ -132,7 +140,7 @@ class MLR(BaseEstimator, TransformerMixin):
         return loss
 
 
-    def fit(self, X, y, epoch=10, batch_size=512,
+    def fit(self, X, y, epoch=10, batch_size=256,
             X_valid=None, y_valid=None,
             early_stopping=False, refit=False):
         has_valid = X_valid is not None
@@ -146,16 +154,25 @@ class MLR(BaseEstimator, TransformerMixin):
             for i in range(total_batch):
                 X_batch, y_batch = self.get_batch(X, y, batch_size, i)
                 self.fit_on_batch(X_batch, y_batch)
+                if self.verbose > 0 and (i+1) % self.verbose_step == 0:
+                    train_res = self.evaluate(X_batch, y_batch)
+                    if has_valid:
+                        valid_res = self.evaluate(X_valid, y_valid)
+                        print("epoch%2d step %4d train-result %.6f valid-result %.6f [%.1f s]"
+                              % (epoch+1, i+1, train_res, valid_res, time()-t1))
+                    else:
+                        print("epoch%2d step %4d train-result %.6f [%.1f s]"
+                              % (epoch+1, i+1, train_res, time()-t1))
 
             train_result.append(self.evaluate(X, y))
             if has_valid:
                 valid_result.append(self.evaluate(X_valid, y_valid))
             if self.verbose > 0 and epoch % self.verbose == 0:
                 if has_valid:
-                    print("[%d] train-result=%.4f, valid-result=%.4f [%.1f s]"
+                    print("[%d] train-result=%.6f, valid-result=%.6f [%.1f s]"
                         % (epoch + 1, train_result[-1], valid_result[-1], time() - t1))
                 else:
-                    print("[%d] train-result=%.4f [%.1f s]"
+                    print("[%d] train-result=%.6f [%.1f s]"
                         % (epoch + 1, train_result[-1], time() - t1))
             if has_valid and early_stopping and self.training_termination(valid_result):
                 break

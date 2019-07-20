@@ -13,9 +13,9 @@ from time import time
 
 class FFM(BaseEstimator, TransformerMixin):
 
-    def __init__(self, features, feature_size, field_dict, embedding_size=16, learning_rate=0.001,
+    def __init__(self, features, feature_size, field_dict, embedding_size=16, learning_rate=0.001, l2_reg=0.00001,
                  first_order=True, second_order=True, optimizer_type='Adam',loss_type='logloss', 
-                 verbose=True, greater_is_better=True, eval_metric=roc_auc_score, random_seed=2019):
+                 verbose=True, verbose_step=1000, greater_is_better=True, eval_metric=roc_auc_score, random_seed=2019):
         
         assert first_order or second_order, "Must use first_order or second_order"
         assert len(field_dict) >= 2, "Field num is no more than 2, please turn to FM"
@@ -25,6 +25,7 @@ class FFM(BaseEstimator, TransformerMixin):
         
         self.embedding_size = embedding_size
         self.learning_rate = learning_rate
+        self.l2_reg = l2_reg
 
         self.first_order = first_order
         self.second_order = second_order
@@ -32,6 +33,7 @@ class FFM(BaseEstimator, TransformerMixin):
         self.optimizer_type = optimizer_type
         self.loss_type = loss_type
         self.verbose = verbose
+        self.verbose_step = verbose_step
 
         self.greater_is_better = greater_is_better
         self.eval_metric = eval_metric
@@ -41,7 +43,6 @@ class FFM(BaseEstimator, TransformerMixin):
         self.field = list(self.field_dict.keys())
 
         self._init_graph()
-
 
     def _init_graph(self):
         self.graph = tf.Graph()
@@ -61,7 +62,6 @@ class FFM(BaseEstimator, TransformerMixin):
 
             self.lr_out = tf.add(self.weights['bias'],sum(lr_result))
 
-
             ffm_vec = defaultdict(list)
             for field_index in self.field_dict:
                 for s in self.field_dict[field_index]:
@@ -78,7 +78,7 @@ class FFM(BaseEstimator, TransformerMixin):
                     vec = tf.multiply(ffm_vec[f1][:,j-1,:], ffm_vec[f2][:,i,:])
                     ffm_result.append(vec)
 
-            self.ffm_out = tf.reduce_sum(sum(ffm_result),axis=1,keepdims=True)
+            self.ffm_out = tf.reduce_sum(sum(ffm_result), axis=1, keepdims=True)
             self.out = self.ffm_out*self.second_order + self.lr_out*self.first_order
 
             if self.loss_type == 'logloss':
@@ -87,8 +87,12 @@ class FFM(BaseEstimator, TransformerMixin):
             elif self.loss_type == 'mse':
                 self.loss = tf.nn.l2_loss(tf.subtract(self.label,self.out))
             else:
-                self.loss = self.loss_type(self.label,self.out)
+                self.loss = self.loss_type(self.label, self.out)
 
+            if self.l2_reg > 0:
+                for embedding_vec in ffm_result+lr_result:
+                    self.loss += tf.contrib.layers.l2_regularizer(
+                        self.l2_reg)(embedding_vec)
 
             if self.optimizer_type.lower() == "adam":
                 self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate, beta1=0.9, beta2=0.999,
@@ -137,12 +141,10 @@ class FFM(BaseEstimator, TransformerMixin):
 
         return weights
 
-
     def _init_session(self):
         config = tf.ConfigProto(device_count={"gpu": 0})
         config.gpu_options.allow_growth = True
         return tf.Session(config=config)
-
 
     def shuffle_in_unison_scary(self, a, b):
         rng_state = np.random.get_state()
@@ -150,13 +152,11 @@ class FFM(BaseEstimator, TransformerMixin):
         np.random.set_state(rng_state)
         np.random.shuffle(b)
 
-
     def get_batch(self, X, y, batch_size, index):
         start = index * batch_size
         end = (index+1) * batch_size
         end = end if end < len(y) else len(y)
         return X[start:end], y[start:end]
-
 
     def fit_on_batch(self, X, y):
         feed_dict = {
@@ -166,8 +166,7 @@ class FFM(BaseEstimator, TransformerMixin):
         loss, opt = self.sess.run((self.loss, self.optimizer), feed_dict=feed_dict)
         return loss
 
-
-    def fit(self, X, y, epoch=10, batch_size=512,
+    def fit(self, X, y, epoch=10, batch_size=256,
             X_valid=None, y_valid=None,
             early_stopping=False, refit=False):
         has_valid = X_valid is not None
@@ -181,16 +180,22 @@ class FFM(BaseEstimator, TransformerMixin):
             for i in range(total_batch):
                 X_batch, y_batch = self.get_batch(X, y, batch_size, i)
                 self.fit_on_batch(X_batch, y_batch)
+                if self.verbose > 0 and (i+1) % self.verbose_step == 0:
+                    train_res = self.evaluate(X_batch, y_batch)
+                    if has_valid:
+                        valid_res = self.evaluate(X_valid, y_valid)
+                        print("epoch%2d step %4d train-result %.6f valid-result %.6f [%.1f s]"
+                              % (epoch+1, i+1, train_res, valid_res, time()-t1))
 
             train_result.append(self.evaluate(X, y))
             if has_valid:
                 valid_result.append(self.evaluate(X_valid, y_valid))
             if self.verbose > 0 and epoch % self.verbose == 0:
                 if has_valid:
-                    print("[%d] train-result=%.4f, valid-result=%.4f [%.1f s]"
+                    print("[%d] train-result=%.6f, valid-result=%.6f [%.1f s]"
                         % (epoch + 1, train_result[-1], valid_result[-1], time() - t1))
                 else:
-                    print("[%d] train-result=%.4f [%.1f s]"
+                    print("[%d] train-result=%.6f [%.1f s]"
                         % (epoch + 1, train_result[-1], time() - t1))
             if has_valid and early_stopping and self.training_termination(valid_result):
                 break
@@ -233,7 +238,6 @@ class FFM(BaseEstimator, TransformerMixin):
                     return True
         return False
 
-
     def predict(self, X, batch_size=512):
         dummy_y = [1] * len(X)
         batch_index = 0
@@ -251,7 +255,6 @@ class FFM(BaseEstimator, TransformerMixin):
             X_batch, y_batch = self.get_batch(X, dummy_y, batch_size, batch_index)
 
         return np.concatenate(y_pred,axis=0)
-
 
     def evaluate(self, X, y):
         y_pred = self.predict(X)

@@ -10,11 +10,12 @@ import tensorflow as tf
 import numpy as np 
 from time import time 
 
+
 class AFM(BaseEstimator, TransformerMixin):
 
-    def __init__(self, features, feature_size, attention_size=8, embedding_size=16, learning_rate=0.001,
+    def __init__(self, features, feature_size, attention_size=8, embedding_size=16, learning_rate=0.001, l2_reg=0.00001,
                  optimizer_type='Adam',loss_type='logloss', 
-                 verbose=True, greater_is_better=True, eval_metric=roc_auc_score, random_seed=2019):
+                 verbose=True, verbose_step=2000, greater_is_better=True, eval_metric=roc_auc_score, random_seed=2019):
         
         self.features = features
         self.feature_size = feature_size
@@ -22,17 +23,18 @@ class AFM(BaseEstimator, TransformerMixin):
         self.attention_size = attention_size
         self.embedding_size = embedding_size
         self.learning_rate = learning_rate
+        self.l2_reg = l2_reg
 
         self.optimizer_type = optimizer_type
         self.loss_type = loss_type
         self.verbose = verbose
+        self.verbose_step = verbose_step
 
         self.greater_is_better = greater_is_better
         self.eval_metric = eval_metric
         self.random_seed = random_seed
 
         self._init_graph()
-
 
     def _init_graph(self):
         self.graph = tf.Graph()
@@ -70,7 +72,6 @@ class AFM(BaseEstimator, TransformerMixin):
             self.fm_out = tf.reduce_sum(self.fm_out, axis=1)
             self.fm_out = tf.reduce_sum(self.fm_out, axis=1, keepdims=True)
 
-
             self.out = self.fm_out + self.lr_out
 
             if self.loss_type == 'logloss':
@@ -79,8 +80,20 @@ class AFM(BaseEstimator, TransformerMixin):
             elif self.loss_type == 'mse':
                 self.loss = tf.nn.l2_loss(tf.subtract(self.label,self.out))
             else:
-                self.loss = self.loss_type(self.label,self.out)
+                self.loss = self.loss_type(self.label, self.out)
 
+            if self.l2_reg > 0:
+                self.loss += tf.contrib.layers.l2_regularizer(
+                    self.l2_reg)(self.weights["attention_weight"])
+                self.loss += tf.contrib.layers.l2_regularizer(
+                    self.l2_reg)(self.weights["attention_output"])
+
+                self.loss += tf.contrib.layers.l2_regularizer(
+                    self.l2_reg)(fm_result)
+
+                for embedding_vec in lr_result:
+                    self.loss += tf.contrib.layers.l2_regularizer(
+                        self.l2_reg)(embedding_vec)
 
             if self.optimizer_type.lower() == "adam":
                 self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate, beta1=0.9, beta2=0.999,
@@ -110,7 +123,6 @@ class AFM(BaseEstimator, TransformerMixin):
             if self.verbose > 0:
                 print("#params: %d" % total_parameters)
 
-
     def _attention_weight(self, fm_result):
         attention_weight = tf.reshape(fm_result, (-1, self.embedding_size))
         attention_weight = tf.matmul(attention_weight, self.weights['attention_weight'])
@@ -121,7 +133,6 @@ class AFM(BaseEstimator, TransformerMixin):
         attention_weight = tf.reshape(attention_weight, shape=(-1, num_, 1))
         attention_weight = tf.nn.softmax(attention_weight, axis=1)
         return attention_weight
-
 
     def _init_weights(self):
         weights = {}
@@ -137,19 +148,19 @@ class AFM(BaseEstimator, TransformerMixin):
             )
             weights['bias'] = tf.Variable(
                 tf.random_uniform([1,1],0.0,1.0),
-                name = 'bias'
+                name='bias'
             )
         weights['attention_weight'] = tf.Variable(
             tf.random_normal([self.embedding_size, self.attention_size]),
-            name = 'attention_weight'
+            name='attention_weight'
         )
         weights['attention_bias'] = tf.Variable(
             tf.random_uniform([1, self.attention_size]),
-            name = 'attention_bias'
+            name='attention_bias'
         )
         weights['attention_output'] = tf.Variable(
             tf.random_normal([self.attention_size, 1]),
-            name = 'attention_output'
+            name='attention_output'
         )
         return weights
 
@@ -183,7 +194,7 @@ class AFM(BaseEstimator, TransformerMixin):
         return loss
 
 
-    def fit(self, X, y, epoch=10, batch_size=512,
+    def fit(self, X, y, epoch=10, batch_size=256,
             X_valid=None, y_valid=None,
             early_stopping=False, refit=False):
         has_valid = X_valid is not None
@@ -197,16 +208,25 @@ class AFM(BaseEstimator, TransformerMixin):
             for i in range(total_batch):
                 X_batch, y_batch = self.get_batch(X, y, batch_size, i)
                 self.fit_on_batch(X_batch, y_batch)
+                if self.verbose and (i + 1) % self.verbose_step == 0:
+                    train_res = self.evaluate(X_batch, y_batch)
+                    if has_valid:
+                        valid_res = self.evaluate(X_valid, y_valid)
+                        print("epoch%2d step %4d train-result %.6f valid-result %.6f [%.1f s]"
+                              % (epoch + 1, i + 1, train_res, valid_res, time() - t1))
+                    else:
+                        print("epoch%2d step %4d train-result %.6f [%.1f s]"
+                              % (epoch + 1, i + 1, train_res, time() - t1))
 
             train_result.append(self.evaluate(X, y))
             if has_valid:
                 valid_result.append(self.evaluate(X_valid, y_valid))
             if self.verbose > 0 and epoch % self.verbose == 0:
                 if has_valid:
-                    print("[%d] train-result=%.4f, valid-result=%.4f [%.1f s]"
+                    print("[%d] train-result=%.6f, valid-result=%.6f [%.1f s]"
                         % (epoch + 1, train_result[-1], valid_result[-1], time() - t1))
                 else:
-                    print("[%d] train-result=%.4f [%.1f s]"
+                    print("[%d] train-result=%.6f [%.1f s]"
                         % (epoch + 1, train_result[-1], time() - t1))
             if has_valid and early_stopping and self.training_termination(valid_result):
                 break
