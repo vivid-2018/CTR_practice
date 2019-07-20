@@ -5,11 +5,10 @@
 *.idea
 *.DS_Store
 __pycache__
-*.csv
+**/*.csv
 .*
 checkpoints/
-data/*.csv
-ratings/*.csv
+
 
 
 
