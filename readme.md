@@ -27,12 +27,13 @@ python merge.py
 NFFM、FFM : 4
 others : 8
 #### learning_rate: 0.0001
-
+#### batch_size : 256
 #### 全连接 : [200, 200, 200]
 
 ### 结果对比
 ![avatar](Figs/Figure_2.png)
-
+训练时间指的是训练一个epoch(1305449条数据)的时间。
+测试时间值得是在测试及集(326363条数据)的时间。
 
 ### DIN vs DeepFM
 ![avatar](Figs/Figure_1.png)
