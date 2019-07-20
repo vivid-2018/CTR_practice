@@ -7,4 +7,10 @@
 __pycache__
 *.csv
 .*
-checkpoints
+checkpoints/
+data/*.csv
+ratings/*.csv
+
+
+
+
