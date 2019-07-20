@@ -1,3 +1,4 @@
+*.pkl
 *.pyc
 *._tmp
 *.out
@@ -5,4 +6,5 @@
 *.DS_Store
 __pycache__
 *.csv
+.*
 checkpoints
